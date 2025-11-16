@@ -1,43 +1,68 @@
-import axios from "axios";
-import { API_KEY } from "./config.js";
+import fetch from "node-fetch";
+import { API_KEY, API_HOST } from "/etc/secrets/config.js";
+
+const BASE_URL = "https://api-football-v1.p.rapidapi.com/v3";
 
 export async function getTeamStats(teamName) {
-  const BASE = "https://api.football-data.org/v4";
+  try {
+    // 1) Buscar ID da equipa pelo nome
+    const searchUrl = `${BASE_URL}/teams?name=${teamName}`;
+    const searchRes = await fetch(searchUrl, {
+      headers: {
+        "x-rapidapi-key": API_KEY,
+        "x-rapidapi-host": "api-football-v1.p.rapidapi.com"
+      }
+    });
 
-  // PASSO 1: Procurar equipa
-  const teams = await axios.get(`${BASE}/teams`, {
-    headers: { "X-Auth-Token": API_KEY }
-  });
+    const searchData = await searchRes.json();
 
-  const team = teams.data.teams.find(t =>
-    t.name.toLowerCase().includes(teamName.toLowerCase())
-  );
+    if (!searchData.response || searchData.response.length === 0) {
+      return { error: "Equipa não encontrada" };
+    }
 
-  if (!team) return { error: "Equipa não encontrada" };
+    const teamID = searchData.response[0].team.id;
 
-  const id = team.id;
+    // 2) Buscar últimos jogos
+    const fixturesUrl = `${BASE_URL}/fixtures?team=${teamID}&last=5`;
+    const fixturesRes = await fetch(fixturesUrl, {
+      headers: {
+        "x-rapidapi-key": API_KEY,
+        "x-rapidapi-host": "api-football-v1.p.rapidapi.com"
+      }
+    });
 
-  // PASSO 2: Buscar últimos jogos (10)
-  const matches = await axios.get(`${BASE}/teams/${id}/matches?limit=10`, {
-    headers: { "X-Auth-Token": API_KEY }
-  });
+    const fixturesData = await fixturesRes.json();
 
-  let gm = [];
-  let gs = [];
-  let forma = [];
+    if (!fixturesData.response || fixturesData.response.length === 0) {
+      return { error: "Sem jogos recentes" };
+    }
 
-  for (let m of matches.data.matches) {
-    let home = m.homeTeam.id === id;
-    let gFor = home ? m.score.fullTime.home : m.score.fullTime.away;
-    let gAgst = home ? m.score.fullTime.away : m.score.fullTime.home;
+    // Processar estatísticas
+    const jogos = fixturesData.response.map(f => {
+      const team = f.teams.home.id === teamID ? "home" : "away";
 
-    gm.push(gFor);
-    gs.push(gAgst);
+      const gm = f.goals[team];
+      const gs = team === "home" ? f.goals.away : f.goals.home;
 
-    forma.push(
-      gFor > gAgst ? "V" : gFor < gAgst ? "D" : "E"
-    );
+      let resultado = "D";
+      if (gm > gs) resultado = "V";
+      if (gm === gs) resultado = "E";
+
+      return { gm, gs, resultado };
+    });
+
+    const gm = jogos.map(j => j.gm);
+    const gs = jogos.map(j => j.gs);
+    const forma = jogos.map(j => j.resultado);
+
+    return {
+      team: teamName,
+      gm,
+      gs,
+      forma
+    };
+
+  } catch (err) {
+    return { error: "Erro ao buscar dados", details: err.message };
   }
-
-  return { gm, gs, forma };
 }
